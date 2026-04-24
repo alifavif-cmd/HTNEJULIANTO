@@ -1,0 +1,168 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ utama ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v2
+
+      - name: Install Gradle
+        run: |
+          wget -q https://services.gradle.org/distributions/gradle-8.2-bin.zip
+          unzip -q gradle-8.2-bin.zip -d $HOME
+          echo "$HOME/gradle-8.2/bin" >> $GITHUB_PATH
+
+      - name: Create Android Project
+        run: |
+          # Folder structure
+          mkdir -p app/src/main/java/com/htjulianto/app
+          mkdir -p app/src/main/res/{layout,values,mipmap-hdpi,mipmap-mdpi,mipmap-xhdpi,mipmap-xxhdpi,mipmap-xxxhdpi}
+          mkdir -p .gradle
+
+          # settings.gradle
+          cat > settings.gradle << 'EOF'
+          rootProject.name = "HTJulianto"
+          include ':app'
+          EOF
+
+          # build.gradle (root)
+          cat > build.gradle << 'EOF'
+          buildscript {
+              repositories { google(); mavenCentral() }
+              dependencies { classpath 'com.android.tools.build:gradle:8.1.0' }
+          }
+          allprojects { repositories { google(); mavenCentral() } }
+          EOF
+
+          # app/build.gradle
+          cat > app/build.gradle << 'EOF'
+          plugins { id 'com.android.application' }
+          android {
+              namespace "com.htjulianto.app"
+              compileSdk 34
+              defaultConfig {
+                  applicationId "com.htjulianto.app"
+                  minSdk 21
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+              buildTypes { release { minifyEnabled false } }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_1_8
+                  targetCompatibility JavaVersion.VERSION_1_8
+              }
+          }
+          dependencies { implementation 'androidx.appcompat:appcompat:1.6.1' }
+          EOF
+
+          # Copy index.html as asset
+          mkdir -p app/src/main/assets
+          cp index.html app/src/main/assets/index.html
+
+          # AndroidManifest.xml
+          cat > app/src/main/AndroidManifest.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <application
+                  android:allowBackup="true"
+                  android:icon="@mipmap/ic_launcher"
+                  android:label="HT Julianto"
+                  android:theme="@style/AppTheme">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          # MainActivity.java
+          cat > app/src/main/java/com/htjulianto/app/MainActivity.java << 'EOF'
+          package com.htjulianto.app;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          public class MainActivity extends Activity {
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  WebView webView = new WebView(this);
+                  setContentView(webView);
+                  WebSettings s = webView.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  s.setAllowFileAccessFromFileURLs(true);
+                  webView.setWebViewClient(new WebViewClient());
+                  webView.loadUrl("file:///android_asset/index.html");
+              }
+          }
+          EOF
+
+          # strings.xml
+          cat > app/src/main/res/values/strings.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">HT Julianto</string>
+          </resources>
+          EOF
+
+          # styles.xml
+          cat > app/src/main/res/values/styles.xml << 'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="AppTheme" parent="Theme.AppCompat.Light.NoActionBar"/>
+          </resources>
+          EOF
+
+          # Icons using ImageMagick (built-in on GitHub runners)
+          for entry in "mipmap-mdpi:48" "mipmap-hdpi:72" "mipmap-xhdpi:96" "mipmap-xxhdpi:144" "mipmap-xxxhdpi:192"; do
+            folder="${entry%%:*}"; size="${entry##*:}"
+            half=$((size/2))
+            convert -size ${size}x${size} xc:"#0a2805" \
+              -fill "#14640a" -draw "ellipse ${half},${half} $((half-half/5)),$((half-half/5)) 0,360" \
+              -fill "#aeD000" -draw "line ${half},$((size/4)) ${half},$((size*3/4))" \
+              "app/src/main/res/${folder}/ic_launcher.png"
+            cp "app/src/main/res/${folder}/ic_launcher.png" \
+               "app/src/main/res/${folder}/ic_launcher_round.png"
+          done
+
+      - name: Generate Gradle Wrapper
+        run: gradle wrapper --gradle-version=8.2
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Build APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v3
+        with:
+          name: HT-Julianto-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
